@@ -1,11 +1,15 @@
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
 from openai import OpenAI
-import pandas as pd
 import numpy as np
 
-# Initialize client
+# Initialize FastAPI app
+app = FastAPI()
+
+# Initialize OpenAI client
 client = OpenAI()
 
-# Define category list
+# Define category list (same as before)
 categories = [
     "Engineering", "Energy", "Design", "Data Mining", "Computing", "Computer software and applications",
     "Biotechnology", "Bioinformatics", "Biomedical Engineering", "Artificial Intelligence", "Architecture",
@@ -37,7 +41,8 @@ categories = [
     "Electronics and Electric Engineering"
 ]
 
-# Precompute category embeddings (once)
+# ⚙️ Precompute category embeddings once
+print("🔄 Generating category embeddings (first-time only)...")
 category_embeddings = []
 for cat in categories:
     emb = client.embeddings.create(
@@ -46,12 +51,18 @@ for cat in categories:
     ).data[0].embedding
     category_embeddings.append(emb)
 category_embeddings = np.array(category_embeddings)
+print("✅ Category embeddings loaded successfully.")
 
-# Read input Excel file
-df = pd.read_excel("event_info_date.xlsx")
 
-def find_categories(row):
-    event_text = f"{row['event_name']} {row['content']} {row['keywords']}"
+# 🧾 Request Model
+class EventData(BaseModel):
+    event_name: str = ""
+    content: str = ""
+    keywords: str = ""
+
+
+# 🧠 Helper Function
+def get_top_categories(event_text: str):
     emb = client.embeddings.create(
         model="text-embedding-3-small",
         input=event_text
@@ -61,8 +72,21 @@ def find_categories(row):
         np.linalg.norm(category_embeddings, axis=1) * np.linalg.norm(emb)
     )
     top_indices = similarities.argsort()[-3:][::-1]
-    return ", ".join([categories[i] for i in top_indices])
+    top_results = [{"category": categories[i], "score": float(similarities[i])} for i in top_indices]
+    return top_results
 
-df["Category"] = df.apply(find_categories, axis=1)
-df.to_excel("updated_file_with_categories.xlsx", index=False)
-print("✅ Updated file saved to updated_file_with_categories.xlsx")
+
+# 🧩 Endpoint
+@app.post("/classify")
+def classify(event: EventData):
+    text = f"{event.event_name} {event.content} {event.keywords}".strip()
+    if not text:
+        return {"error": "Please provide event_name, content, or keywords."}
+    results = get_top_categories(text)
+    return {"top_categories": results}
+
+
+# 🧩 Health check endpoint
+@app.get("/")
+def health():
+    return {"status": "OK", "message": "Conference Category Classifier is running."}
