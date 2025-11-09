@@ -1,10 +1,11 @@
-from sentence_transformers import SentenceTransformer, util
+from openai import OpenAI
 import pandas as pd
+import numpy as np
 
-# Load a pre-trained SentenceTransformer model
-model = SentenceTransformer('all-MiniLM-L6-v2')  # Lightweight and efficient
+# Initialize client
+client = OpenAI()
 
-# Define the category list
+# Define category list
 categories = [
     "Engineering", "Energy", "Design", "Data Mining", "Computing", "Computer software and applications",
     "Biotechnology", "Bioinformatics", "Biomedical Engineering", "Artificial Intelligence", "Architecture",
@@ -36,26 +37,32 @@ categories = [
     "Electronics and Electric Engineering"
 ]
 
-# Encode category list
-category_embeddings = model.encode(categories, convert_to_tensor=True)
+# Precompute category embeddings (once)
+category_embeddings = []
+for cat in categories:
+    emb = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=cat
+    ).data[0].embedding
+    category_embeddings.append(emb)
+category_embeddings = np.array(category_embeddings)
 
-# Read the Excel file
-file_path = "event_info_date.xlsx"  # Replace with the actual file path
-df = pd.read_excel(file_path)
+# Read input Excel file
+df = pd.read_excel("event_info_date.xlsx")
 
-# Function to find the most relevant categories
 def find_categories(row):
-    event_text = f"{row['event_name']} {row['content']}"
-    event_embedding = model.encode(event_text, convert_to_tensor=True)
-    similarities = util.cos_sim(event_embedding, category_embeddings)[0]
-    top_indices = similarities.argsort(descending=True)[:3]  # Get top 3 categories
+    event_text = f"{row['event_name']} {row['content']} {row['keywords']}"
+    emb = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=event_text
+    ).data[0].embedding
+    emb = np.array(emb)
+    similarities = np.dot(category_embeddings, emb) / (
+        np.linalg.norm(category_embeddings, axis=1) * np.linalg.norm(emb)
+    )
+    top_indices = similarities.argsort()[-3:][::-1]
     return ", ".join([categories[i] for i in top_indices])
 
-# Apply the function to the dataframe
 df["Category"] = df.apply(find_categories, axis=1)
-
-# Save the updated file
-output_path = "updated_file_with_categories.xlsx"
-df.to_excel(output_path, index=False)
-
-print(f"Updated file saved to {output_path}")
+df.to_excel("updated_file_with_categories.xlsx", index=False)
+print("✅ Updated file saved to updated_file_with_categories.xlsx")
